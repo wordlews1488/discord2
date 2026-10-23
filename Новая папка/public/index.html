@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Наша комната</title>
+<style>
+:root{--bg:#1e1f22;--p:#2b2d31;--s:#313338;--t:#f2f3f5;--m:#949ba4;--a:#5865f2;--r:#da373c;--g:#23a55a}
+*{box-sizing:border-box}
+body{margin:0;font:15px system-ui,sans-serif;background:var(--s);color:var(--t);height:100vh;overflow:hidden}
+button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:10px 14px;background:var(--a);color:#fff}
+button.off{background:var(--r)} button.g{background:#4e5058}
+input[type=text]{font:inherit;width:100%;padding:10px;border-radius:8px;border:0;background:var(--bg);color:var(--t)}
+#login{max-width:420px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:12px;height:100vh;overflow:auto}
+.pv{position:relative;margin-bottom:34px}
+.ban{height:120px;border-radius:12px;background:#4752c4 center/cover}
+.ava{width:76px;height:76px;border-radius:50%;background:#1e1f22 center/cover;display:grid;place-items:center;font-size:30px;flex:none}
+.pv .ava{position:absolute;left:16px;bottom:-34px;border:5px solid var(--s);width:84px;height:84px}
+label.f{display:inline-block;background:#4e5058;border-radius:8px;padding:10px 14px;cursor:pointer}
+label.f input{display:none}
+#app{display:none;height:100vh;grid-template-columns:290px 1fr;grid-template-rows:1fr auto}
+#side{grid-row:1/3;background:var(--p);display:flex;flex-direction:column;min-height:0}
+#members{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.card{border-radius:10px;background:var(--bg) center/cover;overflow:hidden}
+.card .in{background:linear-gradient(#0000,#000a);padding:34px 10px 10px;display:flex;flex-direction:column;gap:6px}
+.card .row{display:flex;align-items:center;gap:10px}
+.card .ava{width:40px;height:40px;font-size:18px}
+.card .row b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .ctl{display:flex;gap:8px;align-items:center}
+.card .ctl input{flex:1}.card .ctl button{padding:4px 8px}
+#chat{height:34%;border-top:1px solid #0004;display:flex;flex-direction:column}
+#msgs{flex:1;overflow:auto;padding:8px 12px;font-size:14px}
+#msgs p{margin:0 0 6px;word-break:break-word}#msgs b{color:#c9cdfb}
+#chat form{padding:8px}
+#stage{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;padding:10px;overflow:auto;align-content:start}
+#stage:empty::before{content:"Здесь появятся камеры и демки. Включи свою кнопками внизу.";color:var(--m);padding:20px}
+.tile{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:16/9}
+.tile video{width:100%;height:100%;object-fit:contain}
+.tile span{position:absolute;left:8px;bottom:8px;background:#000a;padding:2px 8px;border-radius:6px;font-size:13px}
+#bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;padding:12px;background:var(--p)}
+@media(max-width:760px){#app{grid-template-columns:1fr;grid-template-rows:38vh 1fr auto}#side{grid-row:1}}
+</style></head><body>
+
+<div id="login">
+  <h2 style="margin:0">Вход в комнату</h2>
+  <div class="pv"><div class="ban" id="pban"></div><div class="ava" id="pava"></div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <label class="f">Аватарка<input type="file" accept="image/*" id="fava"></label>
+    <label class="f">Баннер<input type="file" accept="image/*" id="fban"></label>
+  </div>
+  <input type="text" id="name" placeholder="Ник" maxlength="24">
+  <input type="text" id="room" placeholder="Код комнаты (одинаковый у всех друзей)" value="main" maxlength="32">
+  <button id="go">Зайти</button>
+</div>
+
+<div id="app">
+  <aside id="side">
+    <div id="members"></div>
+    <div id="chat"><div id="msgs"></div>
+      <form id="cf"><input type="text" id="ci" placeholder="Сообщение" autocomplete="off"></form></div>
+  </aside>
+  <main id="stage"></main>
+  <div id="bar">
+    <button id="bMic">🎤 Микрофон</button>
+    <button id="bDeaf">🎧 Звук</button>
+    <button id="bCam" class="g">📷 Камера</button>
+    <button id="bScr" class="g">🖥 Демка</button>
+    <button id="bNs" class="g">Шумодав: вкл</button>
+    <button id="bOut" class="off">Выйти</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let prof = JSON.parse(localStorage.getItem('prof') || 'null') || { name: '', avatar: '', banner: '' };
+let socket, ice, local, muted = false, deaf = false, ns = true;
+const peers = {}, out = { cam: null, scr: null };
+
+function setAva(el, url, name) {
+  el.style.backgroundImage = url ? `url("${url}")` : '';
+  el.textContent = url ? '' : (name || '?')[0].toUpperCase();
+}
+function fit(file, w, h) {
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const k = Math.max(w / im.width, h / im.height), dw = im.width * k, dh = im.height * k;
+      c.getContext('2d').drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      res(c.toDataURL('image/jpeg', .8));
+    };
+    im.src = URL.createObjectURL(file);
+  });
+}
+function drawPreview() {
+  $('pban').style.backgroundImage = prof.banner ? `url("${prof.banner}")` : '';
+  setAva($('pava'), prof.avatar, $('name').value);
+}
+$('name').value = prof.name; drawPreview();
+$('name').oninput = drawPreview;
+$('fava').onchange = async e => { if (e.target.files[0]) { prof.avatar = await fit(e.target.files[0], 128, 128); drawPreview(); } };
+$('fban').onchange = async e => { if (e.target.files[0]) { prof.banner = await fit(e.target.files[0], 600, 200); drawPreview(); } };
+
+$('go').onclick = async () => {
+  prof.name = $('name').value.trim() || 'Аноним';
+  localStorage.setItem('prof', JSON.stringify(prof));
+  ice = await (await fetch('/ice')).json();
+  try {
+    local = await navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true, autoGainControl: true } });
+  } catch { alert('Нет доступа к микрофону. Ты сможешь слушать, но не говорить.'); }
+  $('login').style.display = 'none'; $('app').style.display = 'grid';
+  socket = io(); wire();
+  socket.on('connect', () => socket.emit('join', { room: $('room').value.trim() || 'main', profile: prof }, list => {
+    list.forEach(p => addPeer(p.id, p.profile, p.state)); render();
+  }));
+};
+
+function wire() {
+  socket.on('peer-joined', p => { addPeer(p.id, p.profile); render(); });
+  socket.on('peer-left', id => { const P = peers[id]; if (!P) return; P.pc.close(); P.audio && P.audio.remove(); P.tiles.forEach(t => t.remove()); delete peers[id]; render(); });
+  socket.on('state', ({ id, state }) => { if (peers[id]) { peers[id].state = state; render(); } });
+  socket.on('chat', m => { const p = document.createElement('p'), b = document.createElement('b'); b.textContent = m.name + ': '; p.append(b, m.text); $('msgs').append(p); $('msgs').scrollTop = 1e9; });
+  socket.on('signal', async ({ from, data }) => {
+    const P = peers[from]; if (!P) return; const pc = P.pc;
+    try {
+      if (data.d) {
+        const collide = data.d.type === 'offer' && (P.making || pc.signalingState !== 'stable');
+        P.ignore = !P.polite && collide; if (P.ignore) return;
+        await pc.setRemoteDescription(data.d);
+        if (data.d.type === 'offer') { await pc.setLocalDescription(); socket.emit('signal', { to: from, data: { d: pc.localDescription } }); }
+      } else if (data.c) { try { await pc.addIceCandidate(data.c); } catch (e) { if (!P.ignore) throw e; } }
+    } catch (e) { console.error(e); }
+  });
+}
+
+function addPeer(id, info, state) {
+  const pc = new RTCPeerConnection({ iceServers: ice });
+  const P = { id, info, state: state || {}, pc, polite: socket.id < id, making: false, ignore: false, vol: 1, mine: false, tiles: [], senders: {} };
+  peers[id] = P;
+  if (local) local.getAudioTracks().forEach(t => pc.addTrack(t, local)); else pc.addTransceiver('audio', { direction: 'recvonly' });
+  Object.keys(out).forEach(k => out[k] && addOut(P, k));
+  pc.onicecandidate = e => e.candidate && socket.emit('signal', { to: id, data: { c: e.candidate } });
+  pc.onnegotiationneeded = async () => {
+    try { P.making = true; await pc.setLocalDescription(); socket.emit('signal', { to: id, data: { d: pc.localDescription } }); }
+    catch (e) { console.error(e); } finally { P.making = false; }
+  };
+  pc.ontrack = e => {
+    const t = e.track, st = e.streams[0] || new MediaStream([t]);
+    if (t.kind === 'audio') {
+      if (!P.audio) { P.audio = new Audio(); P.audio.autoplay = true; document.body.append(P.audio); }
+      P.audio.srcObject = st; applyAudio(P);
+    } else {
+      const tile = mkTile(st, info.name);
+      P.tiles.push(tile);
+      t.onmute = () => tile.hidden = true; t.onunmute = () => tile.hidden = false;
+      t.onended = () => tile.remove();
+    }
+  };
+}
+function applyAudio(P) { if (P.audio) { P.audio.muted = deaf || P.mine; P.audio.volume = P.vol; } }
+
+function mkTile(stream, label) {
+  const d = document.createElement('div'); d.className = 'tile';
+  const v = document.createElement('video'); v.autoplay = true; v.playsInline = true; v.muted = true; v.srcObject = stream;
+  const s = document.createElement('span'); s.textContent = label;
+  d.append(v, s); d.ondblclick = () => v.requestFullscreen && v.requestFullscreen();
+  $('stage').append(d); return d;
+}
+
+function card(info, state, P) {
+  const d = document.createElement('div'); d.className = 'card';
+  if (info.banner) d.style.backgroundImage = `url("${info.banner}")`;
+  const inn = document.createElement('div'); inn.className = 'in';
+  const row = document.createElement('div'); row.className = 'row';
+  const a = document.createElement('div'); a.className = 'ava'; setAva(a, info.avatar, info.name);
+  const n = document.createElement('b'); n.textContent = (P ? '' : 'Ты · ') + info.name;
+  const ic = document.createElement('span'); ic.textContent = (state.deaf ? '🔇🎧' : state.muted ? '🔇' : '');
+  row.append(a, n, ic); inn.append(row);
+  if (P) {
+    const c = document.createElement('div'); c.className = 'ctl';
+    const r = document.createElement('input'); r.type = 'range'; r.min = 0; r.max = 100; r.value = P.vol * 100;
+    r.oninput = () => { P.vol = r.value / 100; applyAudio(P); };
+    const b = document.createElement('button'); b.className = P.mine ? 'off' : 'g'; b.textContent = P.mine ? 'Заглушен' : 'Заглушить';
+    b.onclick = () => { P.mine = !P.mine; applyAudio(P); render(); };
+    c.append(r, b); inn.append(c);
+  }
+  d.append(inn); return d;
+}
+function render() {
+  const box = $('members'); box.innerHTML = '';
+  box.append(card(prof, { muted: muted || deaf, deaf }));
+  Object.values(peers).forEach(P => box.append(card(P.info, P.state, P)));
+}
+
+function sendState() {
+  if (local) local.getAudioTracks().forEach(t => t.enabled = !(muted || deaf));
+  $('bMic').className = (muted || deaf) ? 'off' : ''; $('bMic').textContent = (muted || deaf) ? '🔇 Микрофон выкл' : '🎤 Микрофон';
+  $('bDeaf').className = deaf ? 'off' : ''; $('bDeaf').textContent = deaf ? '🔇 Звук выкл' : '🎧 Звук';
+  socket.emit('state', { muted: muted || deaf, deaf }); Object.values(peers).forEach(applyAudio); render();
+}
+$('bMic').onclick = () => { muted = !muted; if (!muted) deaf = false; sendState(); };
+$('bDeaf').onclick = () => { deaf = !deaf; sendState(); };
+$('bNs').onclick = () => {
+  ns = !ns; $('bNs').textContent = 'Шумодав: ' + (ns ? 'вкл' : 'выкл');
+  local && local.getAudioTracks()[0].applyConstraints({ noiseSuppression: ns, echoCancellation: ns, autoGainControl: ns });
+};
+
+function addOut(P, k) { const o = out[k]; P.senders[k] = P.pc.addTrack(o.tr, o.st); }
+async function toggle(k) {
+  if (out[k]) return stopOut(k);
+  try {
+    const st = k === 'cam' ? await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
+                           : await navigator.mediaDevices.getDisplayMedia({ video: true });
+    const tr = st.getVideoTracks()[0];
+    out[k] = { st, tr, tile: mkTile(st, k === 'cam' ? 'Твоя камера' : 'Твоя демка') };
+    tr.onended = () => stopOut(k);
+    Object.values(peers).forEach(P => addOut(P, k));
+    $(k === 'cam' ? 'bCam' : 'bScr').className = '';
+  } catch (e) { alert('Не получилось: ' + e.message); }
+}
+function stopOut(k) {
+  const o = out[k]; if (!o) return;
+  o.tr.stop(); o.tile.remove();
+  Object.values(peers).forEach(P => { try { P.senders[k] && P.pc.removeTrack(P.senders[k]); } catch {} });
+  out[k] = null; $(k === 'cam' ? 'bCam' : 'bScr').className = 'g';
+}
+$('bCam').onclick = () => toggle('cam');
+$('bScr').onclick = () => toggle('scr');
+$('bOut').onclick = () => location.reload();
+$('cf').onsubmit = e => { e.preventDefault(); const v = $('ci').value.trim(); if (v) socket.emit('chat', v); $('ci').value = ''; };
+</script></body></html>
